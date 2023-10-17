@@ -3,7 +3,7 @@ name: Terraform Provider ACI Checks
 on:
   pull_request:
     paths:
-      - '.github/workflows/test.yaml'
+      - '.github/workflows/checks.yaml'
       - '**.go'
 
 permissions:
@@ -23,7 +23,7 @@ jobs:
       - name: gofmt Check
         run: ./scripts/gofmtcheck.sh
       - name: Build
-        run: go build
+        run: go build -v
   acceptance:
     name: Acceptance Tests
     needs: build
