@@ -11,19 +11,22 @@ permissions:
   contents: read
 
 jobs:
-  format:
-    name: Terraform Provider ACI Format Checks
+  build:
+    name: Build Checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
         with:
           go-version-file: 'go.mod'
-      - run: |
-          chmod +x ./scripts/gofmtcheck.sh
-          ./scripts/gofmtcheck.sh
+      - run: chmod +x ./scripts/gofmtcheck.sh
+      - name: gofmt Check
+        run: ./scripts/gofmtcheck.sh
+      - name: Build
+        run: go build
   acceptance:
-    name: Terraform Provider ACI Acceptance Tests
+    name: Acceptance Tests
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
