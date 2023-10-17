@@ -1,5 +1,4 @@
-
-name: Terraform Provider ACI Tests
+name: Terraform Provider ACI Checks
 
 on:
   pull_request:
@@ -12,8 +11,19 @@ permissions:
   contents: read
 
 jobs:
+  format:
+    name: Terraform Provider ACI Format Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
+        with:
+          go-version-file: 'go.mod'
+      - run: |
+          chmod +x ./scripts/gofmtcheck.sh
+          ./scripts/gofmtcheck.sh
   acceptance:
-    name: Acceptance Tests
+    name: Terraform Provider ACI Acceptance Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -24,18 +34,8 @@ jobs:
         with:
           terraform_version: '1.5.*'
           terraform_wrapper: false
-      - run: go test -v -cover ./...
+      - run: go test github.com/CiscoDevNet/terraform-provider-aci/v2/internal/provider -v -cover -timeout 120m
         env:
           TF_ACC: '1'
           TF_ACC_STATE_LINEAGE: '1'
-          TF_ACC_TERRAFORM_VERSION: '1.6.1'
-  unit:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
-        with:
-          go-version-file: 'go.mod'
-      - run: go test -v -cover ./...
 
