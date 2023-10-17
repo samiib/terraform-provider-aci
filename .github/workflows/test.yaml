@@ -38,4 +38,6 @@ jobs:
         env:
           TF_ACC: '1'
           TF_ACC_STATE_LINEAGE: '1'
-
+          ACI_USERNAME: ${{ secrets.TF_ACC_ACI_USERNAME }}
+          ACI_PASSWORD: ${{ secrets.TF_ACC_ACI_PASSWORD }}
+          ACI_URL: ${{ secrets.TF_ACC_ACI_URL }}
