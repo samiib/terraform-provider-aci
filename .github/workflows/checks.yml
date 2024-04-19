@@ -32,6 +32,9 @@ jobs:
     name: Acceptance Tests
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+        group: ci-test-${{ matrix.apic_host.name }}
+        cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
