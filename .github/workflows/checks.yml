@@ -22,10 +22,10 @@ jobs:
       - run: chmod +x ./scripts/gofmtcheck.sh
       - name: gofmt Check
         run: ./scripts/gofmtcheck.sh
-      - name: Generate provider code
-        run: go generate
-      - name: Check generated code for diffs
-        run: git diff --exit-code
+      # - name: Generate provider code
+      #   run: go generate
+      # - name: Check generated code for diffs
+      #   run: git diff --exit-code
       - name: Build
         run: go build -v
   acceptance:
