@@ -23,7 +23,7 @@ jobs:
       - name: gofmt Check
         run: ./scripts/gofmtcheck.sh
       - name: Generate provider code
-        run: go run -mod=mod ./gen/generator.go
+        run: export GOFLAGS="-mod=mod" & go generate
       - name: Check generated code for diffs
         run: git diff --exit-code
       - name: Build
