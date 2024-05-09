@@ -1,5 +1,3 @@
-//go:build ignore
-
 /*
 Generates terraform provider code based on templates.
 
@@ -63,7 +61,7 @@ const (
 	definitionsPath         = "./gen/definitions"
 	metaPath                = "./gen/meta"
 	templatePath            = "./gen/templates"
-	testVarsPath            = "./gen/testVars"
+	testVarsPath            = "./gen/testvars"
 	providerExamplePath     = "./examples/provider/provider.tf"
 	resourcesExamplesPath   = "./examples/resources"
 	datasourcesExamplesPath = "./examples/data-sources"

@@ -28,22 +28,23 @@ jobs:
       - name: Build
         run: go build -v
 
-  # diff:
-  #   name: Check Generated Code Difference
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-go@v5
-  #       with:
-  #         go-version-file: 'go.mod'
-  #     - name: Generate provider code
-  #       run: go generate
-  #     - name: Check generated code for diffs
-  #       run: git diff --exit-code
+  diff:
+    name: Check Generated Code Difference
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - name: Generate provider code
+        run: go generate
+      - name: Check generated code for diffs
+        run: git diff --exit-code
 
   acceptance:
     name: Acceptance Tests
-    needs: [build]
+    if: github.repository_owner == 'CiscoDevNet'
+    needs: [build, diff]
     runs-on: ubuntu-latest
     env:
       ACI_USERNAME: 'ansible_github_ci'
@@ -84,4 +85,6 @@ jobs:
       - name: Upload coverage to Codecov
         # Upload Coverage on latest only
         if: ${{ matrix.apic_host.name == 'v6.0'}}
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
