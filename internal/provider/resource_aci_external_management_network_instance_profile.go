@@ -77,6 +77,31 @@ type MgmtInstPIdentifier struct {
 	Name types.String
 }
 
+func (r *MgmtInstPResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.Plan.Raw.IsNull() {
+		var planData, stateData *MgmtInstPResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+		resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.Name.IsUnknown() {
+			setMgmtInstPId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "mgmtInstP", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &planData)...)
+	}
+}
+
 func (r *MgmtInstPResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	tflog.Debug(ctx, "Start metadata of resource: aci_external_management_network_instance_profile")
 	resp.TypeName = req.ProviderTypeName + "_external_management_network_instance_profile"
@@ -263,8 +288,17 @@ func (r *MgmtInstPResource) Create(ctx context.Context, req resource.CreateReque
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *MgmtInstPResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setMgmtInstPId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setMgmtInstPId(ctx, stateData)
+	}
 	getAndSetMgmtInstPAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The mgmtInstP object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *MgmtInstPResourceModel
 
@@ -275,7 +309,9 @@ func (r *MgmtInstPResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	setMgmtInstPId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setMgmtInstPId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_external_management_network_instance_profile with id '%s'", data.Id.ValueString()))
 
@@ -288,7 +324,7 @@ func (r *MgmtInstPResource) Create(ctx context.Context, req resource.CreateReque
 	var tagTagPlan, tagTagState []TagTagMgmtInstPResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getMgmtInstPCreateJsonPayload(ctx, &resp.Diagnostics, data, mgmtRsOoBConsPlan, mgmtRsOoBConsState, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getMgmtInstPCreateJsonPayload(ctx, &resp.Diagnostics, true, data, mgmtRsOoBConsPlan, mgmtRsOoBConsState, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -356,7 +392,7 @@ func (r *MgmtInstPResource) Update(ctx context.Context, req resource.UpdateReque
 	var tagTagPlan, tagTagState []TagTagMgmtInstPResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getMgmtInstPCreateJsonPayload(ctx, &resp.Diagnostics, data, mgmtRsOoBConsPlan, mgmtRsOoBConsState, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getMgmtInstPCreateJsonPayload(ctx, &resp.Diagnostics, false, data, mgmtRsOoBConsPlan, mgmtRsOoBConsState, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -645,9 +681,13 @@ func getMgmtInstPTagTagChildPayloads(ctx context.Context, diags *diag.Diagnostic
 	return childPayloads
 }
 
-func getMgmtInstPCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *MgmtInstPResourceModel, mgmtRsOoBConsPlan, mgmtRsOoBConsState []MgmtRsOoBConsMgmtInstPResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationMgmtInstPResourceModel, tagTagPlan, tagTagState []TagTagMgmtInstPResourceModel) *container.Container {
+func getMgmtInstPCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *MgmtInstPResourceModel, mgmtRsOoBConsPlan, mgmtRsOoBConsState []MgmtRsOoBConsMgmtInstPResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationMgmtInstPResourceModel, tagTagPlan, tagTagState []TagTagMgmtInstPResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	MgmtRsOoBConschildPayloads := getMgmtInstPMgmtRsOoBConsChildPayloads(ctx, diags, data, mgmtRsOoBConsPlan, mgmtRsOoBConsState)

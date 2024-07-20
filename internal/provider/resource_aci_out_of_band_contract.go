@@ -74,6 +74,31 @@ type VzOOBBrCPIdentifier struct {
 	Name types.String
 }
 
+func (r *VzOOBBrCPResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.Plan.Raw.IsNull() {
+		var planData, stateData *VzOOBBrCPResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+		resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.Name.IsUnknown() {
+			setVzOOBBrCPId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "vzOOBBrCP", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &planData)...)
+	}
+}
+
 func (r *VzOOBBrCPResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	tflog.Debug(ctx, "Start metadata of resource: aci_out_of_band_contract")
 	resp.TypeName = req.ProviderTypeName + "_out_of_band_contract"
@@ -271,8 +296,17 @@ func (r *VzOOBBrCPResource) Create(ctx context.Context, req resource.CreateReque
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *VzOOBBrCPResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setVzOOBBrCPId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setVzOOBBrCPId(ctx, stateData)
+	}
 	getAndSetVzOOBBrCPAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The vzOOBBrCP object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *VzOOBBrCPResourceModel
 
@@ -283,7 +317,9 @@ func (r *VzOOBBrCPResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	setVzOOBBrCPId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setVzOOBBrCPId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_out_of_band_contract with id '%s'", data.Id.ValueString()))
 
@@ -293,7 +329,7 @@ func (r *VzOOBBrCPResource) Create(ctx context.Context, req resource.CreateReque
 	var tagTagPlan, tagTagState []TagTagVzOOBBrCPResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getVzOOBBrCPCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getVzOOBBrCPCreateJsonPayload(ctx, &resp.Diagnostics, true, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -358,7 +394,7 @@ func (r *VzOOBBrCPResource) Update(ctx context.Context, req resource.UpdateReque
 	var tagTagPlan, tagTagState []TagTagVzOOBBrCPResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getVzOOBBrCPCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getVzOOBBrCPCreateJsonPayload(ctx, &resp.Diagnostics, false, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -600,9 +636,13 @@ func getVzOOBBrCPTagTagChildPayloads(ctx context.Context, diags *diag.Diagnostic
 	return childPayloads
 }
 
-func getVzOOBBrCPCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *VzOOBBrCPResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationVzOOBBrCPResourceModel, tagTagPlan, tagTagState []TagTagVzOOBBrCPResourceModel) *container.Container {
+func getVzOOBBrCPCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *VzOOBBrCPResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationVzOOBBrCPResourceModel, tagTagPlan, tagTagState []TagTagVzOOBBrCPResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	TagAnnotationchildPayloads := getVzOOBBrCPTagAnnotationChildPayloads(ctx, diags, data, tagAnnotationPlan, tagAnnotationState)

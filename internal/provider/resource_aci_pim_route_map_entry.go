@@ -74,6 +74,31 @@ type PimRouteMapEntryIdentifier struct {
 	Order types.String
 }
 
+func (r *PimRouteMapEntryResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.Plan.Raw.IsNull() {
+		var planData, stateData *PimRouteMapEntryResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+		resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.ParentDn.IsUnknown() && !planData.Order.IsUnknown() {
+			setPimRouteMapEntryId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "pimRouteMapEntry", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &planData)...)
+	}
+}
+
 func (r *PimRouteMapEntryResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	tflog.Debug(ctx, "Start metadata of resource: aci_pim_route_map_entry")
 	resp.TypeName = req.ProviderTypeName + "_pim_route_map_entry"
@@ -262,8 +287,17 @@ func (r *PimRouteMapEntryResource) Create(ctx context.Context, req resource.Crea
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *PimRouteMapEntryResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setPimRouteMapEntryId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setPimRouteMapEntryId(ctx, stateData)
+	}
 	getAndSetPimRouteMapEntryAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The pimRouteMapEntry object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *PimRouteMapEntryResourceModel
 
@@ -274,7 +308,9 @@ func (r *PimRouteMapEntryResource) Create(ctx context.Context, req resource.Crea
 		return
 	}
 
-	setPimRouteMapEntryId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setPimRouteMapEntryId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_pim_route_map_entry with id '%s'", data.Id.ValueString()))
 
@@ -284,7 +320,7 @@ func (r *PimRouteMapEntryResource) Create(ctx context.Context, req resource.Crea
 	var tagTagPlan, tagTagState []TagTagPimRouteMapEntryResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getPimRouteMapEntryCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getPimRouteMapEntryCreateJsonPayload(ctx, &resp.Diagnostics, true, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -349,7 +385,7 @@ func (r *PimRouteMapEntryResource) Update(ctx context.Context, req resource.Upda
 	var tagTagPlan, tagTagState []TagTagPimRouteMapEntryResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getPimRouteMapEntryCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getPimRouteMapEntryCreateJsonPayload(ctx, &resp.Diagnostics, false, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -605,9 +641,13 @@ func getPimRouteMapEntryTagTagChildPayloads(ctx context.Context, diags *diag.Dia
 	return childPayloads
 }
 
-func getPimRouteMapEntryCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *PimRouteMapEntryResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationPimRouteMapEntryResourceModel, tagTagPlan, tagTagState []TagTagPimRouteMapEntryResourceModel) *container.Container {
+func getPimRouteMapEntryCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *PimRouteMapEntryResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationPimRouteMapEntryResourceModel, tagTagPlan, tagTagState []TagTagPimRouteMapEntryResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	TagAnnotationchildPayloads := getPimRouteMapEntryTagAnnotationChildPayloads(ctx, diags, data, tagAnnotationPlan, tagAnnotationState)

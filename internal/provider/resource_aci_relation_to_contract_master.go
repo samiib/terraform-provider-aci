@@ -65,6 +65,31 @@ type FvRsSecInheritedIdentifier struct {
 	TDn types.String
 }
 
+func (r *FvRsSecInheritedResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.Plan.Raw.IsNull() {
+		var planData, stateData *FvRsSecInheritedResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+		resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.ParentDn.IsUnknown() && !planData.TDn.IsUnknown() {
+			setFvRsSecInheritedId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "fvRsSecInherited", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &planData)...)
+	}
+}
+
 func (r *FvRsSecInheritedResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	tflog.Debug(ctx, "Start metadata of resource: aci_relation_to_contract_master")
 	resp.TypeName = req.ProviderTypeName + "_relation_to_contract_master"
@@ -194,8 +219,17 @@ func (r *FvRsSecInheritedResource) Create(ctx context.Context, req resource.Crea
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *FvRsSecInheritedResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setFvRsSecInheritedId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setFvRsSecInheritedId(ctx, stateData)
+	}
 	getAndSetFvRsSecInheritedAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The fvRsSecInherited object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *FvRsSecInheritedResourceModel
 
@@ -206,7 +240,9 @@ func (r *FvRsSecInheritedResource) Create(ctx context.Context, req resource.Crea
 		return
 	}
 
-	setFvRsSecInheritedId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setFvRsSecInheritedId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_relation_to_contract_master with id '%s'", data.Id.ValueString()))
 
@@ -216,7 +252,7 @@ func (r *FvRsSecInheritedResource) Create(ctx context.Context, req resource.Crea
 	var tagTagPlan, tagTagState []TagTagFvRsSecInheritedResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getFvRsSecInheritedCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getFvRsSecInheritedCreateJsonPayload(ctx, &resp.Diagnostics, true, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -281,7 +317,7 @@ func (r *FvRsSecInheritedResource) Update(ctx context.Context, req resource.Upda
 	var tagTagPlan, tagTagState []TagTagFvRsSecInheritedResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getFvRsSecInheritedCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getFvRsSecInheritedCreateJsonPayload(ctx, &resp.Diagnostics, false, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -516,9 +552,13 @@ func getFvRsSecInheritedTagTagChildPayloads(ctx context.Context, diags *diag.Dia
 	return childPayloads
 }
 
-func getFvRsSecInheritedCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *FvRsSecInheritedResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationFvRsSecInheritedResourceModel, tagTagPlan, tagTagState []TagTagFvRsSecInheritedResourceModel) *container.Container {
+func getFvRsSecInheritedCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *FvRsSecInheritedResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationFvRsSecInheritedResourceModel, tagTagPlan, tagTagState []TagTagFvRsSecInheritedResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	TagAnnotationchildPayloads := getFvRsSecInheritedTagAnnotationChildPayloads(ctx, diags, data, tagAnnotationPlan, tagAnnotationState)

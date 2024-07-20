@@ -37,6 +37,7 @@ resource "aci_application_epg" "fooapplication_epg" {
 ## Argument Reference ##
 * `application_profile_dn` - (Required) Distinguished Name of the parent application profile. Type - String.
 * `name` - (Required) Name of Object application epg. Type - String.
+* `pc_tag` - (Read-Only) A numeric ID to represent a policy enforcement group.
 * `annotation` - (Optional) Annotation for object application epg. Type - String.
 * `description` - (Optional) Description for object application epg. Type - String.
 * `exception_tag` - (Optional) Exception tag for object application epg. Range: "0" - "512" . Type - String.

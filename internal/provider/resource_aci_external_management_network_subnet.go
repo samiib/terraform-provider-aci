@@ -68,6 +68,31 @@ type MgmtSubnetIdentifier struct {
 	Ip types.String
 }
 
+func (r *MgmtSubnetResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.Plan.Raw.IsNull() {
+		var planData, stateData *MgmtSubnetResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+		resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.ParentDn.IsUnknown() && !planData.Ip.IsUnknown() {
+			setMgmtSubnetId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "mgmtSubnet", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &planData)...)
+	}
+}
+
 func (r *MgmtSubnetResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	tflog.Debug(ctx, "Start metadata of resource: aci_external_management_network_subnet")
 	resp.TypeName = req.ProviderTypeName + "_external_management_network_subnet"
@@ -221,8 +246,17 @@ func (r *MgmtSubnetResource) Create(ctx context.Context, req resource.CreateRequ
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *MgmtSubnetResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setMgmtSubnetId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setMgmtSubnetId(ctx, stateData)
+	}
 	getAndSetMgmtSubnetAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The mgmtSubnet object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *MgmtSubnetResourceModel
 
@@ -233,7 +267,9 @@ func (r *MgmtSubnetResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	setMgmtSubnetId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setMgmtSubnetId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_external_management_network_subnet with id '%s'", data.Id.ValueString()))
 
@@ -243,7 +279,7 @@ func (r *MgmtSubnetResource) Create(ctx context.Context, req resource.CreateRequ
 	var tagTagPlan, tagTagState []TagTagMgmtSubnetResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getMgmtSubnetCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getMgmtSubnetCreateJsonPayload(ctx, &resp.Diagnostics, true, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -308,7 +344,7 @@ func (r *MgmtSubnetResource) Update(ctx context.Context, req resource.UpdateRequ
 	var tagTagPlan, tagTagState []TagTagMgmtSubnetResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getMgmtSubnetCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getMgmtSubnetCreateJsonPayload(ctx, &resp.Diagnostics, false, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -552,9 +588,13 @@ func getMgmtSubnetTagTagChildPayloads(ctx context.Context, diags *diag.Diagnosti
 	return childPayloads
 }
 
-func getMgmtSubnetCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *MgmtSubnetResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationMgmtSubnetResourceModel, tagTagPlan, tagTagState []TagTagMgmtSubnetResourceModel) *container.Container {
+func getMgmtSubnetCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *MgmtSubnetResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationMgmtSubnetResourceModel, tagTagPlan, tagTagState []TagTagMgmtSubnetResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	TagAnnotationchildPayloads := getMgmtSubnetTagAnnotationChildPayloads(ctx, diags, data, tagAnnotationPlan, tagAnnotationState)

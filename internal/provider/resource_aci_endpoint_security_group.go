@@ -587,6 +587,17 @@ func (r *FvESgResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 			return
 		}
 
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.ParentDn.IsUnknown() && !planData.Name.IsUnknown() {
+			setFvESgId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "fvESg", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
 		if !configData.MatchT.IsNull() {
 			planData.DeprecatedMatchT = configData.MatchT
 		} else if !configData.DeprecatedMatchT.IsNull() {
@@ -1491,8 +1502,17 @@ func (r *FvESgResource) Create(ctx context.Context, req resource.CreateRequest, 
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *FvESgResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setFvESgId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setFvESgId(ctx, stateData)
+	}
 	getAndSetFvESgAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The fvESg object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *FvESgResourceModel
 
@@ -1503,7 +1523,9 @@ func (r *FvESgResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	setFvESgId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setFvESgId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_endpoint_security_group with id '%s'", data.Id.ValueString()))
 
@@ -1531,7 +1553,7 @@ func (r *FvESgResource) Create(ctx context.Context, req resource.CreateRequest, 
 	var tagTagPlan, tagTagState []TagTagFvESgResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getFvESgCreateJsonPayload(ctx, &resp.Diagnostics, data, fvRsConsPlan, fvRsConsState, fvRsConsIfPlan, fvRsConsIfState, fvRsIntraEpgPlan, fvRsIntraEpgState, fvRsProvPlan, fvRsProvState, fvRsScopePlan, fvRsScopeState, fvRsSecInheritedPlan, fvRsSecInheritedState, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getFvESgCreateJsonPayload(ctx, &resp.Diagnostics, true, data, fvRsConsPlan, fvRsConsState, fvRsConsIfPlan, fvRsConsIfState, fvRsIntraEpgPlan, fvRsIntraEpgState, fvRsProvPlan, fvRsProvState, fvRsScopePlan, fvRsScopeState, fvRsSecInheritedPlan, fvRsSecInheritedState, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -1614,7 +1636,7 @@ func (r *FvESgResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	var tagTagPlan, tagTagState []TagTagFvESgResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getFvESgCreateJsonPayload(ctx, &resp.Diagnostics, data, fvRsConsPlan, fvRsConsState, fvRsConsIfPlan, fvRsConsIfState, fvRsIntraEpgPlan, fvRsIntraEpgState, fvRsProvPlan, fvRsProvState, fvRsScopePlan, fvRsScopeState, fvRsSecInheritedPlan, fvRsSecInheritedState, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getFvESgCreateJsonPayload(ctx, &resp.Diagnostics, false, data, fvRsConsPlan, fvRsConsState, fvRsConsIfPlan, fvRsConsIfState, fvRsIntraEpgPlan, fvRsIntraEpgState, fvRsProvPlan, fvRsProvState, fvRsScopePlan, fvRsScopeState, fvRsSecInheritedPlan, fvRsSecInheritedState, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -2219,9 +2241,13 @@ func getFvESgTagTagChildPayloads(ctx context.Context, diags *diag.Diagnostics, d
 	return childPayloads
 }
 
-func getFvESgCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *FvESgResourceModel, fvRsConsPlan, fvRsConsState []FvRsConsFvESgResourceModel, fvRsConsIfPlan, fvRsConsIfState []FvRsConsIfFvESgResourceModel, fvRsIntraEpgPlan, fvRsIntraEpgState []FvRsIntraEpgFvESgResourceModel, fvRsProvPlan, fvRsProvState []FvRsProvFvESgResourceModel, fvRsScopePlan, fvRsScopeState []FvRsScopeFvESgResourceModel, fvRsSecInheritedPlan, fvRsSecInheritedState []FvRsSecInheritedFvESgResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationFvESgResourceModel, tagTagPlan, tagTagState []TagTagFvESgResourceModel) *container.Container {
+func getFvESgCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *FvESgResourceModel, fvRsConsPlan, fvRsConsState []FvRsConsFvESgResourceModel, fvRsConsIfPlan, fvRsConsIfState []FvRsConsIfFvESgResourceModel, fvRsIntraEpgPlan, fvRsIntraEpgState []FvRsIntraEpgFvESgResourceModel, fvRsProvPlan, fvRsProvState []FvRsProvFvESgResourceModel, fvRsScopePlan, fvRsScopeState []FvRsScopeFvESgResourceModel, fvRsSecInheritedPlan, fvRsSecInheritedState []FvRsSecInheritedFvESgResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationFvESgResourceModel, tagTagPlan, tagTagState []TagTagFvESgResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	FvRsConschildPayloads := getFvESgFvRsConsChildPayloads(ctx, diags, data, fvRsConsPlan, fvRsConsState)

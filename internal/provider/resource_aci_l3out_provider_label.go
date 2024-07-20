@@ -72,6 +72,31 @@ type L3extProvLblIdentifier struct {
 	Name types.String
 }
 
+func (r *L3extProvLblResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.Plan.Raw.IsNull() {
+		var planData, stateData *L3extProvLblResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+		resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.ParentDn.IsUnknown() && !planData.Name.IsUnknown() {
+			setL3extProvLblId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "l3extProvLbl", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &planData)...)
+	}
+}
+
 func (r *L3extProvLblResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	tflog.Debug(ctx, "Start metadata of resource: aci_l3out_provider_label")
 	resp.TypeName = req.ProviderTypeName + "_l3out_provider_label"
@@ -244,8 +269,17 @@ func (r *L3extProvLblResource) Create(ctx context.Context, req resource.CreateRe
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *L3extProvLblResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setL3extProvLblId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setL3extProvLblId(ctx, stateData)
+	}
 	getAndSetL3extProvLblAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The l3extProvLbl object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *L3extProvLblResourceModel
 
@@ -256,7 +290,9 @@ func (r *L3extProvLblResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	setL3extProvLblId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setL3extProvLblId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_l3out_provider_label with id '%s'", data.Id.ValueString()))
 
@@ -266,7 +302,7 @@ func (r *L3extProvLblResource) Create(ctx context.Context, req resource.CreateRe
 	var tagTagPlan, tagTagState []TagTagL3extProvLblResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getL3extProvLblCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getL3extProvLblCreateJsonPayload(ctx, &resp.Diagnostics, true, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -331,7 +367,7 @@ func (r *L3extProvLblResource) Update(ctx context.Context, req resource.UpdateRe
 	var tagTagPlan, tagTagState []TagTagL3extProvLblResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getL3extProvLblCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getL3extProvLblCreateJsonPayload(ctx, &resp.Diagnostics, false, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -581,9 +617,13 @@ func getL3extProvLblTagTagChildPayloads(ctx context.Context, diags *diag.Diagnos
 	return childPayloads
 }
 
-func getL3extProvLblCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *L3extProvLblResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationL3extProvLblResourceModel, tagTagPlan, tagTagState []TagTagL3extProvLblResourceModel) *container.Container {
+func getL3extProvLblCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *L3extProvLblResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationL3extProvLblResourceModel, tagTagPlan, tagTagState []TagTagL3extProvLblResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	TagAnnotationchildPayloads := getL3extProvLblTagAnnotationChildPayloads(ctx, diags, data, tagAnnotationPlan, tagAnnotationState)

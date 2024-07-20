@@ -65,6 +65,31 @@ type NetflowRsMonitorToExporterIdentifier struct {
 	TnNetflowExporterPolName types.String
 }
 
+func (r *NetflowRsMonitorToExporterResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.Plan.Raw.IsNull() {
+		var planData, stateData *NetflowRsMonitorToExporterResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+		resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.ParentDn.IsUnknown() && !planData.TnNetflowExporterPolName.IsUnknown() {
+			setNetflowRsMonitorToExporterId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "netflowRsMonitorToExporter", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &planData)...)
+	}
+}
+
 func (r *NetflowRsMonitorToExporterResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	tflog.Debug(ctx, "Start metadata of resource: aci_relation_to_netflow_exporter")
 	resp.TypeName = req.ProviderTypeName + "_relation_to_netflow_exporter"
@@ -194,8 +219,17 @@ func (r *NetflowRsMonitorToExporterResource) Create(ctx context.Context, req res
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *NetflowRsMonitorToExporterResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setNetflowRsMonitorToExporterId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setNetflowRsMonitorToExporterId(ctx, stateData)
+	}
 	getAndSetNetflowRsMonitorToExporterAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The netflowRsMonitorToExporter object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *NetflowRsMonitorToExporterResourceModel
 
@@ -206,7 +240,9 @@ func (r *NetflowRsMonitorToExporterResource) Create(ctx context.Context, req res
 		return
 	}
 
-	setNetflowRsMonitorToExporterId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setNetflowRsMonitorToExporterId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_relation_to_netflow_exporter with id '%s'", data.Id.ValueString()))
 
@@ -216,7 +252,7 @@ func (r *NetflowRsMonitorToExporterResource) Create(ctx context.Context, req res
 	var tagTagPlan, tagTagState []TagTagNetflowRsMonitorToExporterResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getNetflowRsMonitorToExporterCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getNetflowRsMonitorToExporterCreateJsonPayload(ctx, &resp.Diagnostics, true, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -281,7 +317,7 @@ func (r *NetflowRsMonitorToExporterResource) Update(ctx context.Context, req res
 	var tagTagPlan, tagTagState []TagTagNetflowRsMonitorToExporterResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getNetflowRsMonitorToExporterCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getNetflowRsMonitorToExporterCreateJsonPayload(ctx, &resp.Diagnostics, false, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -516,9 +552,13 @@ func getNetflowRsMonitorToExporterTagTagChildPayloads(ctx context.Context, diags
 	return childPayloads
 }
 
-func getNetflowRsMonitorToExporterCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *NetflowRsMonitorToExporterResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationNetflowRsMonitorToExporterResourceModel, tagTagPlan, tagTagState []TagTagNetflowRsMonitorToExporterResourceModel) *container.Container {
+func getNetflowRsMonitorToExporterCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *NetflowRsMonitorToExporterResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationNetflowRsMonitorToExporterResourceModel, tagTagPlan, tagTagState []TagTagNetflowRsMonitorToExporterResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	TagAnnotationchildPayloads := getNetflowRsMonitorToExporterTagAnnotationChildPayloads(ctx, diags, data, tagAnnotationPlan, tagAnnotationState)

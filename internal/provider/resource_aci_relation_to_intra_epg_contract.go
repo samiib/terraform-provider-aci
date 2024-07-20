@@ -65,6 +65,31 @@ type FvRsIntraEpgIdentifier struct {
 	TnVzBrCPName types.String
 }
 
+func (r *FvRsIntraEpgResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.Plan.Raw.IsNull() {
+		var planData, stateData *FvRsIntraEpgResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+		resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.ParentDn.IsUnknown() && !planData.TnVzBrCPName.IsUnknown() {
+			setFvRsIntraEpgId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "fvRsIntraEpg", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &planData)...)
+	}
+}
+
 func (r *FvRsIntraEpgResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	tflog.Debug(ctx, "Start metadata of resource: aci_relation_to_intra_epg_contract")
 	resp.TypeName = req.ProviderTypeName + "_relation_to_intra_epg_contract"
@@ -194,8 +219,17 @@ func (r *FvRsIntraEpgResource) Create(ctx context.Context, req resource.CreateRe
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *FvRsIntraEpgResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setFvRsIntraEpgId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setFvRsIntraEpgId(ctx, stateData)
+	}
 	getAndSetFvRsIntraEpgAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The fvRsIntraEpg object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *FvRsIntraEpgResourceModel
 
@@ -206,7 +240,9 @@ func (r *FvRsIntraEpgResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	setFvRsIntraEpgId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setFvRsIntraEpgId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_relation_to_intra_epg_contract with id '%s'", data.Id.ValueString()))
 
@@ -216,7 +252,7 @@ func (r *FvRsIntraEpgResource) Create(ctx context.Context, req resource.CreateRe
 	var tagTagPlan, tagTagState []TagTagFvRsIntraEpgResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getFvRsIntraEpgCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getFvRsIntraEpgCreateJsonPayload(ctx, &resp.Diagnostics, true, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -281,7 +317,7 @@ func (r *FvRsIntraEpgResource) Update(ctx context.Context, req resource.UpdateRe
 	var tagTagPlan, tagTagState []TagTagFvRsIntraEpgResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getFvRsIntraEpgCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getFvRsIntraEpgCreateJsonPayload(ctx, &resp.Diagnostics, false, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -516,9 +552,13 @@ func getFvRsIntraEpgTagTagChildPayloads(ctx context.Context, diags *diag.Diagnos
 	return childPayloads
 }
 
-func getFvRsIntraEpgCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *FvRsIntraEpgResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationFvRsIntraEpgResourceModel, tagTagPlan, tagTagState []TagTagFvRsIntraEpgResourceModel) *container.Container {
+func getFvRsIntraEpgCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *FvRsIntraEpgResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationFvRsIntraEpgResourceModel, tagTagPlan, tagTagState []TagTagFvRsIntraEpgResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	TagAnnotationchildPayloads := getFvRsIntraEpgTagAnnotationChildPayloads(ctx, diags, data, tagAnnotationPlan, tagAnnotationState)

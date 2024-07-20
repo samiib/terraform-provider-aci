@@ -69,6 +69,31 @@ type L3extRsRedistributePolIdentifier struct {
 	TnRtctrlProfileName types.String
 }
 
+func (r *L3extRsRedistributePolResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.Plan.Raw.IsNull() {
+		var planData, stateData *L3extRsRedistributePolResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+		resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.ParentDn.IsUnknown() && !planData.Src.IsUnknown() && !planData.TnRtctrlProfileName.IsUnknown() {
+			setL3extRsRedistributePolId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "l3extRsRedistributePol", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &planData)...)
+	}
+}
+
 func (r *L3extRsRedistributePolResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	tflog.Debug(ctx, "Start metadata of resource: aci_l3out_redistribute_policy")
 	resp.TypeName = req.ProviderTypeName + "_l3out_redistribute_policy"
@@ -209,8 +234,17 @@ func (r *L3extRsRedistributePolResource) Create(ctx context.Context, req resourc
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *L3extRsRedistributePolResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setL3extRsRedistributePolId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setL3extRsRedistributePolId(ctx, stateData)
+	}
 	getAndSetL3extRsRedistributePolAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The l3extRsRedistributePol object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *L3extRsRedistributePolResourceModel
 
@@ -221,7 +255,9 @@ func (r *L3extRsRedistributePolResource) Create(ctx context.Context, req resourc
 		return
 	}
 
-	setL3extRsRedistributePolId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setL3extRsRedistributePolId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_l3out_redistribute_policy with id '%s'", data.Id.ValueString()))
 
@@ -231,7 +267,7 @@ func (r *L3extRsRedistributePolResource) Create(ctx context.Context, req resourc
 	var tagTagPlan, tagTagState []TagTagL3extRsRedistributePolResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getL3extRsRedistributePolCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getL3extRsRedistributePolCreateJsonPayload(ctx, &resp.Diagnostics, true, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -296,7 +332,7 @@ func (r *L3extRsRedistributePolResource) Update(ctx context.Context, req resourc
 	var tagTagPlan, tagTagState []TagTagL3extRsRedistributePolResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getL3extRsRedistributePolCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getL3extRsRedistributePolCreateJsonPayload(ctx, &resp.Diagnostics, false, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -534,9 +570,13 @@ func getL3extRsRedistributePolTagTagChildPayloads(ctx context.Context, diags *di
 	return childPayloads
 }
 
-func getL3extRsRedistributePolCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *L3extRsRedistributePolResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationL3extRsRedistributePolResourceModel, tagTagPlan, tagTagState []TagTagL3extRsRedistributePolResourceModel) *container.Container {
+func getL3extRsRedistributePolCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *L3extRsRedistributePolResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationL3extRsRedistributePolResourceModel, tagTagPlan, tagTagState []TagTagL3extRsRedistributePolResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	TagAnnotationchildPayloads := getL3extRsRedistributePolTagAnnotationChildPayloads(ctx, diags, data, tagAnnotationPlan, tagAnnotationState)

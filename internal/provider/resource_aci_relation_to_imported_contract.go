@@ -68,6 +68,31 @@ type FvRsConsIfIdentifier struct {
 	TnVzCPIfName types.String
 }
 
+func (r *FvRsConsIfResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.Plan.Raw.IsNull() {
+		var planData, stateData *FvRsConsIfResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+		resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.ParentDn.IsUnknown() && !planData.TnVzCPIfName.IsUnknown() {
+			setFvRsConsIfId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "fvRsConsIf", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &planData)...)
+	}
+}
+
 func (r *FvRsConsIfResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	tflog.Debug(ctx, "Start metadata of resource: aci_relation_to_imported_contract")
 	resp.TypeName = req.ProviderTypeName + "_relation_to_imported_contract"
@@ -208,8 +233,17 @@ func (r *FvRsConsIfResource) Create(ctx context.Context, req resource.CreateRequ
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *FvRsConsIfResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setFvRsConsIfId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setFvRsConsIfId(ctx, stateData)
+	}
 	getAndSetFvRsConsIfAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The fvRsConsIf object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *FvRsConsIfResourceModel
 
@@ -220,7 +254,9 @@ func (r *FvRsConsIfResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	setFvRsConsIfId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setFvRsConsIfId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_relation_to_imported_contract with id '%s'", data.Id.ValueString()))
 
@@ -230,7 +266,7 @@ func (r *FvRsConsIfResource) Create(ctx context.Context, req resource.CreateRequ
 	var tagTagPlan, tagTagState []TagTagFvRsConsIfResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getFvRsConsIfCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getFvRsConsIfCreateJsonPayload(ctx, &resp.Diagnostics, true, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -295,7 +331,7 @@ func (r *FvRsConsIfResource) Update(ctx context.Context, req resource.UpdateRequ
 	var tagTagPlan, tagTagState []TagTagFvRsConsIfResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getFvRsConsIfCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getFvRsConsIfCreateJsonPayload(ctx, &resp.Diagnostics, false, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -533,9 +569,13 @@ func getFvRsConsIfTagTagChildPayloads(ctx context.Context, diags *diag.Diagnosti
 	return childPayloads
 }
 
-func getFvRsConsIfCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *FvRsConsIfResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationFvRsConsIfResourceModel, tagTagPlan, tagTagState []TagTagFvRsConsIfResourceModel) *container.Container {
+func getFvRsConsIfCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *FvRsConsIfResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationFvRsConsIfResourceModel, tagTagPlan, tagTagState []TagTagFvRsConsIfResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	TagAnnotationchildPayloads := getFvRsConsIfTagAnnotationChildPayloads(ctx, diags, data, tagAnnotationPlan, tagAnnotationState)

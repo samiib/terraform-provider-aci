@@ -69,6 +69,31 @@ type PimRouteMapPolIdentifier struct {
 	Name types.String
 }
 
+func (r *PimRouteMapPolResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.Plan.Raw.IsNull() {
+		var planData, stateData *PimRouteMapPolResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+		resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if (planData.Id.IsUnknown() || planData.Id.IsNull()) && !planData.ParentDn.IsUnknown() && !planData.Name.IsUnknown() {
+			setPimRouteMapPolId(ctx, planData)
+		}
+
+		if stateData == nil && !globalAllowExistingOnCreate && !planData.Id.IsUnknown() && !planData.Id.IsNull() {
+			CheckDn(ctx, &resp.Diagnostics, r.client, "pimRouteMapPol", planData.Id.ValueString())
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &planData)...)
+	}
+}
+
 func (r *PimRouteMapPolResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	tflog.Debug(ctx, "Start metadata of resource: aci_pim_route_map_policy")
 	resp.TypeName = req.ProviderTypeName + "_pim_route_map_policy"
@@ -230,8 +255,17 @@ func (r *PimRouteMapPolResource) Create(ctx context.Context, req resource.Create
 	// On create retrieve information on current state prior to making any changes in order to determine child delete operations
 	var stateData *PimRouteMapPolResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &stateData)...)
-	setPimRouteMapPolId(ctx, stateData)
+	if stateData.Id.IsUnknown() || stateData.Id.IsNull() {
+		setPimRouteMapPolId(ctx, stateData)
+	}
 	getAndSetPimRouteMapPolAttributes(ctx, &resp.Diagnostics, r.client, stateData)
+	if !globalAllowExistingOnCreate && !stateData.Id.IsNull() {
+		resp.Diagnostics.AddError(
+			"Object Already Exists",
+			fmt.Sprintf("The pimRouteMapPol object with DN '%s' already exists.", stateData.Id.ValueString()),
+		)
+		return
+	}
 
 	var data *PimRouteMapPolResourceModel
 
@@ -242,7 +276,9 @@ func (r *PimRouteMapPolResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
-	setPimRouteMapPolId(ctx, data)
+	if data.Id.IsUnknown() || data.Id.IsNull() {
+		setPimRouteMapPolId(ctx, data)
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Create of resource aci_pim_route_map_policy with id '%s'", data.Id.ValueString()))
 
@@ -252,7 +288,7 @@ func (r *PimRouteMapPolResource) Create(ctx context.Context, req resource.Create
 	var tagTagPlan, tagTagState []TagTagPimRouteMapPolResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getPimRouteMapPolCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getPimRouteMapPolCreateJsonPayload(ctx, &resp.Diagnostics, true, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -317,7 +353,7 @@ func (r *PimRouteMapPolResource) Update(ctx context.Context, req resource.Update
 	var tagTagPlan, tagTagState []TagTagPimRouteMapPolResourceModel
 	data.TagTag.ElementsAs(ctx, &tagTagPlan, false)
 	stateData.TagTag.ElementsAs(ctx, &tagTagState, false)
-	jsonPayload := getPimRouteMapPolCreateJsonPayload(ctx, &resp.Diagnostics, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
+	jsonPayload := getPimRouteMapPolCreateJsonPayload(ctx, &resp.Diagnostics, false, data, tagAnnotationPlan, tagAnnotationState, tagTagPlan, tagTagState)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -564,9 +600,13 @@ func getPimRouteMapPolTagTagChildPayloads(ctx context.Context, diags *diag.Diagn
 	return childPayloads
 }
 
-func getPimRouteMapPolCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, data *PimRouteMapPolResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationPimRouteMapPolResourceModel, tagTagPlan, tagTagState []TagTagPimRouteMapPolResourceModel) *container.Container {
+func getPimRouteMapPolCreateJsonPayload(ctx context.Context, diags *diag.Diagnostics, createType bool, data *PimRouteMapPolResourceModel, tagAnnotationPlan, tagAnnotationState []TagAnnotationPimRouteMapPolResourceModel, tagTagPlan, tagTagState []TagTagPimRouteMapPolResourceModel) *container.Container {
 	payloadMap := map[string]interface{}{}
 	payloadMap["attributes"] = map[string]string{}
+
+	if createType && !globalAllowExistingOnCreate {
+		payloadMap["attributes"].(map[string]string)["status"] = "created"
+	}
 	childPayloads := []map[string]interface{}{}
 
 	TagAnnotationchildPayloads := getPimRouteMapPolTagAnnotationChildPayloads(ctx, diags, data, tagAnnotationPlan, tagAnnotationState)
