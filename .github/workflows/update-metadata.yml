@@ -1,0 +1,29 @@
+name: Update Metadata
+
+on:
+  schedule:
+    - cron: '0 9 * * MON' # Every Monday at 9AM UTC
+  workflow_dispatch:
+
+jobs:
+  update-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Unshallow
+        run: git fetch --prune --unshallow
+
+      # Get latest metadata
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - name: Get latest metadata and generate provider code
+        run: go generate
+        env:
+          RE_GEN_CLASSES: '1'
+          GEN_ANNOTATION_UNSUPPORTED: '1'
+      
+      - name: Check generated code for diffs
+        run: git diff --exit-code
