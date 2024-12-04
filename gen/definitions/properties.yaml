@@ -200,6 +200,8 @@ pkiTP:
   overwrites:
     cert_usage: "certificate_usage"
     cert_chain: "certificate_chain"
+  ignores:
+    - "certUsage"
   resource_required:
     - "certChain"
   ignore_properties_in_test:
